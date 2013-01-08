@@ -1,17 +1,32 @@
 /// <reference path='./lib/node.d.ts' />
 /// <reference path='./lib/linq.js.d.ts' />
 
-export module zoetro {
+export module ExtJS2TypeScript {
 
-    var Enumerable = require("./lib/linq.js");
+    var Enumerable = <linqjs.EnumerableStatic>require("./lib/linq.js");
 
-    export class ExtJS2TypeScriptConverter {
+    export class Converter {
 
-        private definedInterfaces:String[] = [];
-        private usedInterfaces:String[] = [];
+        private undefinedTypes:String[] = [];
 
         private exportMember:Boolean = false;
         private hasConstructor:Boolean = false;
+        private enableImplements = false;
+
+        private definedClasses:String[] = [];
+        private definedInterfaces:String[] = [];
+
+        private membersName:String[] = [];
+
+        constructor(classes:any[]) {
+            for (var i in classes) {
+                if (Enumerable.from(classes[i]["members"]["method"]).any(x=>x["name"] === "constructor")) {
+                    this.definedClasses.push(classes[i]["name"]);
+                } else {
+                    this.definedInterfaces.push(classes[i]["name"] + "Static");
+                }
+            }
+        }
 
         createInterface(jsonDoc:any):String {
             var str = "";
@@ -20,29 +35,36 @@ export module zoetro {
 
             var names = Enumerable.from(jsonDoc["name"].split("."));
 
-            var ifName = names.last() + "Static";
+            var ifName = names.last();
             var nsName = names.take(names.count() - 1).toArray().join(".");
 
             if (names.count() === 1) {
                 this.exportMember = true;
             }
-            else{
+            else {
                 this.exportMember = false;
             }
 
-            if(!this.exportMember)
-            {
+            if (!this.exportMember) {
                 str += "module " + nsName + "{\n";
-                if(this.hasConstructor){
+                if (this.hasConstructor) {
                     str += "export class " + ifName;
-                }else{
-                    str += "export class " + ifName;
-                    //str += "export interface " + ifName;
+                } else {
+                    str += "export interface " + ifName + "Static";
                 }
+
                 if (jsonDoc["extends"]) {
-                    str += " extends " + this.getType(jsonDoc["extends"]);
+                    if (Enumerable.from(this.definedClasses).any(x=>x === jsonDoc["extends"])) {
+                        str += " extends " + this.getType(jsonDoc["extends"]);
+                    } else if (this.hasConstructor) {
+                        str += " implements " + this.getType(jsonDoc["extends"]);
+                        this.enableImplements = true;
+                    } else {
+                        str += " extends " + this.getType(jsonDoc["extends"]);
+                    }
+
                 }
-            }else{
+            } else {
                 str += "module " + ifName;
             }
 
@@ -54,16 +76,19 @@ export module zoetro {
 
             str += "// Cfg\n";
             for (var i in jsonDoc["members"]["cfg"]) {
-                var prop = jsonDoc["members"]["cfg"][i];
+                var cfg = jsonDoc["members"]["cfg"][i];
 
-                if (prop["private"])continue;
-                if (prop["owner"] != jsonDoc["name"])continue;
-                if (method["overrides"]) continue;
+                if (cfg["private"])continue;
+                if (cfg["owner"] != jsonDoc["name"])continue;
+                if (this.enableImplements && cfg["overrides"]) continue;
+                if (Enumerable.from(this.membersName).any(x=>x === cfg["name"])) continue;
+                this.membersName.push(cfg["name"]);
 
                 str += " ";
-                if(this.exportMember) str += "export var ";
+                if (this.exportMember) str += "export var ";
 
-                str += this.getName(prop["name"]) + " : " + this.getType(prop["html_type"]) + ";\n";
+                str += this.getName(cfg["name"]) + " : " + this.getType(cfg["html_type"]) + ";\n";
+
             }
 
             return str;
@@ -78,10 +103,12 @@ export module zoetro {
 
                 if (prop["private"])continue;
                 if (prop["owner"] != jsonDoc["name"])continue;
-                if (method["overrides"]) continue;
+                if (this.enableImplements && prop["overrides"]) continue;
+                if (Enumerable.from(this.membersName).any(x=>x === prop["name"])) continue;
+                this.membersName.push(prop["name"]);
 
                 str += " ";
-                if(this.exportMember) str += "export var ";
+                if (this.exportMember) str += "export var ";
 
                 str += this.getName(prop["name"]) + " : " + this.getType(prop["html_type"]) + ";\n";
             }
@@ -95,10 +122,12 @@ export module zoetro {
                 var ev = jsonDoc["members"]["event"][i];
 
                 if (ev["owner"] != jsonDoc["name"])continue;
-                if (method["overrides"]) continue;
+                if (this.enableImplements && ev["overrides"]) continue;
+                if (Enumerable.from(this.membersName).any(x=>x === ev["name"])) continue;
+                this.membersName.push(ev["name"]);
 
                 str += " ";
-                if(this.exportMember) str += "export function ";
+                if (this.exportMember) str += "export function ";
 
                 str += ev["name"] + "(";
 
@@ -121,10 +150,12 @@ export module zoetro {
                 var method = jsonDoc["members"]["method"][i];
                 if (method["private"])continue;
                 if (method["owner"] != jsonDoc["name"]) continue;
-                if (method["overrides"]) continue;
+                if (this.enableImplements && method["overrides"]) continue;
+                if (Enumerable.from(this.membersName).any(x=>x === method["name"])) continue;
+                this.membersName.push(method["name"]);
 
                 str += " ";
-                if(this.exportMember) str += "export function ";
+                if (this.exportMember) str += "export function ";
 
                 str += method["name"] + "(";
                 if (method["params"]) {
@@ -135,7 +166,7 @@ export module zoetro {
                 }
 
                 str += ")";
-                if(method["name"] === "constructor"){
+                if (method["name"] === "constructor") {
                     // do nothing
                 } else if (method["return"]) {
                     str += " : " + this.getType(method["return"]["html_type"]);
@@ -152,28 +183,28 @@ export module zoetro {
                 return "/* internal JS type: " + jsonDoc["name"] + "*/";
             }
 
-            this.definedInterfaces.push(jsonDoc["name"] + "Static");
-
-            var str_list = "";
-            str_list += this.createInterface(jsonDoc);
-            str_list += " {\n";
-            str_list += this.createCfg(jsonDoc);
-            str_list += this.createProperty(jsonDoc);
-            str_list += this.createEvent(jsonDoc);
-            str_list += this.createMethod(jsonDoc);
-            str_list += "}\n";
+            var output = "";
+            output += this.createInterface(jsonDoc);
+            output += " {\n";
+            output += this.createCfg(jsonDoc);
+            output += this.createProperty(jsonDoc);
+            output += this.createEvent(jsonDoc);
+            output += this.createMethod(jsonDoc);
+            output += "}\n";
 
             var names = Enumerable.from(jsonDoc["name"].split("."));
 
-            str_list += "declare var " + names.last() + " : " + jsonDoc["name"] + "Static;\n";
-
-            if (names.count() !== 1) {
-                str_list += "}\n";
+            if (!this.hasConstructor) {
+                output += "declare var " + names.last() + " : " + jsonDoc["name"] + "Static;\n";
             }
 
-            str_list += "\n";
+            if (names.count() !== 1) {
+                output += "}\n";
+            }
 
-            return str_list;
+            output += "\n";
+
+            return output;
 
         }
 
@@ -203,15 +234,27 @@ export module zoetro {
                 var baseName = p.replace("...", "").replace("[]", "");
                 if (this.isPrimitiveType(baseName)) {
                     return baseName + "[]";
+                } else if (Enumerable.from(this.definedClasses).any(x=>x === baseName)) {
+                    return baseName + "[]";
                 }
-                this.usedInterfaces.push(baseName + "Static");
+
+                if (!Enumerable.from(this.definedInterfaces).any(x=>x === baseName + "Static")) {
+                    this.undefinedTypes.push(baseName + "Static");
+                }
+
                 return baseName + "Static[]";
             }
 
             if (this.isPrimitiveType(p)) {
                 return p;
+            } else if (Enumerable.from(this.definedClasses).any(x=>x === p)) {
+                return p;
             }
-            this.usedInterfaces.push(p + "Static");
+
+            if (!Enumerable.from(this.definedInterfaces).any(x=>x === p + "Static")) {
+                this.undefinedTypes.push(p + "Static");
+            }
+
             return p + "Static";
         }
 
@@ -220,11 +263,8 @@ export module zoetro {
             return (sub >= 0) && (p.lastIndexOf(suf) === sub);
         }
 
-        getUndefinedInterfaces():String {
-            var defined = Enumerable.from(this.definedInterfaces).distinct();
-            var used = Enumerable.from(this.usedInterfaces).distinct();
-
-            return used.except(defined).select(typeName=> {
+        outputUndefinedTypes():String {
+            return Enumerable.from(this.undefinedTypes).distinct().select(typeName=> {
                 var str = "";
                 var names = Enumerable.from(typeName.split("."));
                 var ifName = names.last();
